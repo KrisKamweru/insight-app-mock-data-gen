@@ -1,18 +1,7 @@
 import { writeFileSync, existsSync, mkdirSync } from "fs";
 import { randomUUID } from "crypto";
 
-// Configuration
-const CONFIG = {
-  TOTAL_EVENTS_TARGET: 45000,
-  DATE_RANGE_DAYS: 60,
-  ANALYTICS_RATIO: 0.65,
-  PERFORMANCE_RATIO: 0.3,
-  CRASH_RATIO: 0.05,
-  SESSIONS_PER_DAY: 1200,
-  EVENTS_PER_SESSION_AVG: 5.2,
-};
-
-// Types (same as before, but updated context)
+// Types
 interface RawEvent {
   id: string;
   source: "performance" | "analytics" | "crash";
@@ -88,6 +77,24 @@ interface DailyRollup {
   purchase_count: number;
 }
 
+interface AppVersion {
+  version: string;
+  build_number: string;
+  release_date: string; // ISO date
+  days_since_release?: number; // calculated
+}
+
+// Configuration
+const CONFIG = {
+  TOTAL_EVENTS_TARGET: 45000,
+  DATE_RANGE_DAYS: 60,
+  ANALYTICS_RATIO: 0.65,
+  PERFORMANCE_RATIO: 0.3,
+  CRASH_RATIO: 0.05,
+  SESSIONS_PER_DAY: 1200,
+  EVENTS_PER_SESSION_AVG: 5.2,
+};
+
 // Banking-specific static data
 const APPS = [
   {
@@ -109,37 +116,58 @@ const COUNTRIES = [
     code: "KE",
     weight: 0.35,
     carriers: ["Safaricom", "Airtel Kenya"],
-    locale: "sw-KE",
+    locales: [
+      { code: "EN", weight: 0.5, name: "English" },
+      { code: "SW", weight: 0.45, name: "Swahili" },
+      { code: "ZH", weight: 0.05, name: "Chinese" }, // Chinese diaspora/business
+    ],
   },
   {
     code: "UG",
     weight: 0.2,
     carriers: ["MTN Uganda", "Airtel Uganda"],
-    locale: "en-UG",
+    locales: [
+      { code: "EN", weight: 0.85, name: "English" },
+      { code: "SW", weight: 0.15, name: "Swahili" },
+    ],
   },
   {
     code: "TZ",
     weight: 0.18,
     carriers: ["Vodacom Tanzania", "Airtel Tanzania"],
-    locale: "sw-TZ",
+    locales: [
+      { code: "SW", weight: 0.7, name: "Swahili" },
+      { code: "EN", weight: 0.3, name: "English" },
+    ],
   },
   {
     code: "RW",
     weight: 0.12,
     carriers: ["MTN Rwanda", "Airtel Rwanda"],
-    locale: "rw-RW",
+    locales: [
+      { code: "RW", weight: 0.6, name: "Kinyarwanda" },
+      { code: "EN", weight: 0.25, name: "English" },
+      { code: "FR", weight: 0.15, name: "French" },
+    ],
   },
   {
     code: "DRC",
     weight: 0.1,
     carriers: ["Orange DRC", "Vodacom DRC"],
-    locale: "fr-DRC",
+    locales: [
+      { code: "FR", weight: 0.75, name: "French" },
+      { code: "SW", weight: 0.15, name: "Swahili" },
+      { code: "EN", weight: 0.1, name: "English" },
+    ],
   },
   {
     code: "SS",
     weight: 0.05,
     carriers: ["MTN South Sudan", "Zain South Sudan"],
-    locale: "en-SS",
+    locales: [
+      { code: "EN", weight: 0.9, name: "English" },
+      { code: "FR", weight: 0.1, name: "French" },
+    ],
   },
 ];
 
@@ -168,21 +196,276 @@ const DEVICES = {
   ],
 };
 
-const VERSIONS = {
+const VERSIONS_WITH_RELEASES = {
   eabank_main: {
-    ios: ["3.2.1", "3.1.5", "3.0.8", "2.9.3", "2.8.7"],
-    android: ["3.2.1", "3.1.5", "3.0.8", "2.9.3", "2.8.7"],
-    web: ["4.1.2", "4.0.8", "3.9.5", "3.8.2"],
+    prod: {
+      ios: [
+        { version: "3.2.1", build_number: "3210", release_date: "2025-07-10" },
+        { version: "3.1.5", build_number: "3150", release_date: "2025-06-15" },
+        { version: "3.0.8", build_number: "3080", release_date: "2025-05-20" },
+        { version: "2.9.3", build_number: "2930", release_date: "2025-04-10" },
+      ],
+      android: [
+        { version: "3.2.1", build_number: "32100", release_date: "2025-07-12" },
+        { version: "3.1.5", build_number: "31500", release_date: "2025-06-18" },
+        { version: "3.0.8", build_number: "30800", release_date: "2025-05-22" },
+        { version: "2.9.3", build_number: "29300", release_date: "2025-04-12" },
+      ],
+      web: [
+        { version: "4.1.2", build_number: "4120", release_date: "2025-07-08" },
+        { version: "4.0.8", build_number: "4080", release_date: "2025-06-12" },
+        { version: "3.9.5", build_number: "3950", release_date: "2025-05-15" },
+      ],
+    },
+    pilot: {
+      ios: [
+        {
+          version: "3.3.0-pilot.2",
+          build_number: "3302",
+          release_date: "2025-07-18",
+        },
+        {
+          version: "3.2.2-pilot.1",
+          build_number: "3221",
+          release_date: "2025-07-05",
+        },
+      ],
+      android: [
+        {
+          version: "3.3.0-pilot.2",
+          build_number: "33002",
+          release_date: "2025-07-19",
+        },
+        {
+          version: "3.2.2-pilot.1",
+          build_number: "32201",
+          release_date: "2025-07-06",
+        },
+      ],
+      web: [
+        {
+          version: "4.2.0-pilot.2",
+          build_number: "4202",
+          release_date: "2025-07-16",
+        },
+        {
+          version: "4.2.0-pilot.1",
+          build_number: "4201",
+          release_date: "2025-07-14",
+        },
+      ],
+    },
+    uat: {
+      ios: [
+        {
+          version: "3.3.1-uat.5",
+          build_number: "3315",
+          release_date: "2025-07-19",
+        },
+        {
+          version: "3.3.0-uat.8",
+          build_number: "3308",
+          release_date: "2025-07-12",
+        },
+      ],
+      android: [
+        {
+          version: "3.3.1-uat.5",
+          build_number: "33105",
+          release_date: "2025-07-19",
+        },
+        {
+          version: "3.3.0-uat.8",
+          build_number: "33008",
+          release_date: "2025-07-13",
+        },
+      ],
+      web: [
+        {
+          version: "4.2.1-uat.3",
+          build_number: "4213",
+          release_date: "2025-07-18",
+        },
+        {
+          version: "4.2.0-uat.7",
+          build_number: "4207",
+          release_date: "2025-06-14",
+        },
+      ],
+    },
+    dev: {
+      ios: [
+        {
+          version: "3.4.0-dev.12",
+          build_number: "34012",
+          release_date: "2025-07-19",
+        },
+        {
+          version: "3.4.0-dev.11",
+          build_number: "34011",
+          release_date: "2025-07-18",
+        },
+        {
+          version: "3.4.0-dev.10",
+          build_number: "34010",
+          release_date: "2025-07-17",
+        },
+      ],
+      android: [
+        {
+          version: "3.4.0-dev.12",
+          build_number: "340012",
+          release_date: "2025-07-19",
+        },
+        {
+          version: "3.4.0-dev.11",
+          build_number: "340011",
+          release_date: "2025-07-18",
+        },
+      ],
+      web: [
+        {
+          version: "4.3.0-dev.8",
+          build_number: "4308",
+          release_date: "2025-07-19",
+        },
+        {
+          version: "4.2.0-dev.3",
+          build_number: "4203",
+          release_date: "2025-07-18",
+        },
+        {
+          version: "4.1.0-dev.5",
+          build_number: "4105",
+          release_date: "2025-07-17",
+        },
+      ],
+    },
   },
   bancaire_drc: {
-    ios: ["2.1.3", "2.0.9", "1.9.4", "1.8.2"],
-    android: ["2.1.3", "2.0.9", "1.9.4", "1.8.2"],
-    web: ["2.5.1", "2.4.6", "2.3.2"],
+    prod: {
+      ios: [
+        { version: "2.1.3", build_number: "213", release_date: "2025-07-14" },
+        { version: "2.0.9", build_number: "209", release_date: "2025-06-20" },
+      ],
+      android: [
+        { version: "2.1.3", build_number: "21300", release_date: "2025-07-15" },
+        { version: "2.0.9", build_number: "20900", release_date: "2025-06-22" },
+      ],
+      web: [
+        { version: "2.5.1", build_number: "251", release_date: "2025-07-11" },
+      ],
+    },
+    pilot: {
+      ios: [
+        {
+          version: "2.2.0-pilot.1",
+          build_number: "2201",
+          release_date: "2025-07-17",
+        },
+      ],
+      android: [
+        {
+          version: "2.2.0-pilot.1",
+          build_number: "22001",
+          release_date: "2025-07-17",
+        },
+      ],
+      web: [
+        {
+          version: "2.6.0-pilot.1",
+          build_number: "2601",
+          release_date: "2025-07-16",
+        },
+      ],
+    },
+    uat: {
+      ios: [
+        {
+          version: "2.2.1-uat.3",
+          build_number: "2213",
+          release_date: "2025-07-18",
+        },
+      ],
+      android: [
+        {
+          version: "2.2.1-uat.3",
+          build_number: "22103",
+          release_date: "2025-07-18",
+        },
+      ],
+      web: [
+        {
+          version: "2.6.1-uat.2",
+          build_number: "2612",
+          release_date: "2025-07-18",
+        },
+      ],
+    },
+    dev: {
+      ios: [
+        {
+          version: "2.3.0-dev.5",
+          build_number: "2305",
+          release_date: "2025-07-19",
+        },
+      ],
+      android: [
+        {
+          version: "2.3.0-dev.5",
+          build_number: "23005",
+          release_date: "2025-07-19",
+        },
+      ],
+      web: [
+        {
+          version: "2.7.0-dev.3",
+          build_number: "2703",
+          release_date: "2025-07-19",
+        },
+      ],
+    },
   },
   eabank_branch: {
-    web: ["4.1.2", "4.0.8", "3.9.5"],
-    ios: ["1.2.1", "1.1.8"], // Tablet app
-    android: ["1.2.1", "1.1.8"], // Tablet app
+    prod: {
+      web: [
+        { version: "4.1.2", build_number: "4120", release_date: "2025-07-09" },
+        { version: "4.0.8", build_number: "4080", release_date: "2025-06-14" },
+      ],
+      ios: [
+        { version: "1.2.1", build_number: "121", release_date: "2025-07-13" }, // Tablet
+      ],
+      android: [
+        { version: "1.2.1", build_number: "12100", release_date: "2025-07-14" }, // Tablet
+      ],
+    },
+    pilot: {
+      web: [
+        {
+          version: "4.2.0-pilot.1",
+          build_number: "4201",
+          release_date: "2025-07-17",
+        },
+      ],
+    },
+    uat: {
+      web: [
+        {
+          version: "4.2.1-uat.2",
+          build_number: "4212",
+          release_date: "2025-07-18",
+        },
+      ],
+    },
+    dev: {
+      web: [
+        {
+          version: "4.3.0-dev.6",
+          build_number: "4306",
+          release_date: "2025-07-19",
+        },
+      ],
+    },
   },
 };
 
@@ -216,24 +499,24 @@ const BRANCH_SCREENS = [
 ];
 
 const API_ENDPOINTS = [
-  "/api/v3/auth/login",
-  "/api/v3/accounts/balance",
-  "/api/v3/transfer/domestic",
-  "/api/v3/transfer/international",
-  "/api/v3/bills/pay",
-  "/api/v3/loans/apply",
-  "/api/v3/transactions/history",
-  "/api/v3/customer/profile",
-  "/api/v3/kyc/verify",
+  "v3/auth/login",
+  "v3/accounts/balance",
+  "v3/transfer/domestic",
+  "v3/transfer/international",
+  "v3/bills/pay",
+  "v3/loans/apply",
+  "v3/transactions/history",
+  "v3/customer/profile",
+  "v3/kyc/verify",
 ];
 
 const BRANCH_ENDPOINTS = [
-  "/api/v4/branch/customer/lookup",
-  "/api/v4/branch/accounts/open",
-  "/api/v4/branch/transactions/process",
-  "/api/v4/branch/cash/deposit",
-  "/api/v4/branch/cash/withdrawal",
-  "/api/v4/branch/kyc/update",
+  "v4/branch/customer/lookup",
+  "v4/branch/accounts/open",
+  "v4/branch/transactions/process",
+  "v4/branch/cash/deposit",
+  "v4/branch/cash/withdrawal",
+  "v4/branch/kyc/update",
 ];
 
 const CRASH_GROUPS = [
@@ -265,7 +548,9 @@ const TRANSACTION_TYPES = [
 
 const ACCOUNT_TYPES = ["savings", "current", "fixed_deposit", "loan"];
 
-// Helper functions (same utility functions as before)
+//=============================
+// HELPER FUNCTIONS
+//=============================
 function weightedChoice<T>(items: Array<T & { weight: number }>): T {
   const total = items.reduce((sum, item) => sum + item.weight, 0);
   let random = Math.random() * total;
@@ -353,12 +638,20 @@ function calculateDuration(
   return Math.max(100, Math.round(logNormal(baseMs * multiplier, 0.6)));
 }
 
+function calculateDaysSinceRelease(
+  releaseDate: string,
+  currentDate: Date
+): number {
+  const release = new Date(releaseDate);
+  const diffTime = currentDate.getTime() - release.getTime();
+  return Math.floor(diffTime / (1000 * 60 * 60 * 24));
+}
+
 function shouldCrash(
-  platform: string,
-  version: string,
+  version: AppVersion,
   deviceTier: string,
   releaseChannel: string,
-  country: string
+  currentDate: Date
 ): boolean {
   let baseProbability = 0.002; // 0.2% base crash rate (higher for banking due to complexity)
 
@@ -371,18 +664,87 @@ function shouldCrash(
   if (deviceTier === "low") baseProbability *= 1.6;
   else if (deviceTier === "high") baseProbability *= 0.7;
 
-  // Country infrastructure impact
-  if (["SS", "DRC"].includes(country)) baseProbability *= 1.4;
+  // Release spike - crash rates spike in first 7 days after release
+  const daysSinceRelease = calculateDaysSinceRelease(
+    version.release_date,
+    currentDate
+  );
+  if (daysSinceRelease <= 7) {
+    // Exponential decay from 3x multiplier on day 0 to 1x on day 7
+    const spikeMultiplier = 1 + 2 * Math.exp(-daysSinceRelease / 3);
+    baseProbability *= spikeMultiplier;
+  }
 
   return Math.random() < baseProbability;
+}
+
+function chooseVersionForSession(
+  appId: string,
+  platform: string,
+  releaseChannel: string,
+  currentDate: Date
+): AppVersion {
+  const appVersions =
+    VERSIONS_WITH_RELEASES[appId as keyof typeof VERSIONS_WITH_RELEASES];
+  if (
+    !appVersions ||
+    !appVersions[releaseChannel as keyof typeof appVersions]
+  ) {
+    // Fallback
+    return {
+      version: "1.0.0",
+      build_number: "1000",
+      release_date: "2025-01-01",
+    };
+  }
+
+  const platformVersions =
+    appVersions[releaseChannel as keyof typeof appVersions][
+      platform as keyof any
+    ] || [];
+  if (platformVersions.length === 0) {
+    return {
+      version: "1.0.0",
+      build_number: "1000",
+      release_date: "2025-01-01",
+    };
+  }
+
+  // Weight versions by adoption curve (newer versions adopted gradually)
+  const weightedVersions = platformVersions.map(
+    (v: { release_date: string }) => {
+      const daysSinceRelease = calculateDaysSinceRelease(
+        v.release_date,
+        currentDate
+      );
+
+      // Adoption curve: slow start, then rapid adoption, then plateau
+      let adoptionWeight = 1;
+      if (daysSinceRelease <= 3)
+        adoptionWeight = 0.1; // Very low adoption first 3 days
+      else if (daysSinceRelease <= 7) adoptionWeight = 0.4; // Building adoption
+      else if (daysSinceRelease <= 14) adoptionWeight = 0.8; // High adoption
+      else if (daysSinceRelease <= 30) adoptionWeight = 1.0; // Peak adoption
+      else adoptionWeight = 0.6; // Declining as users move to newer versions
+
+      return { ...v, weight: adoptionWeight };
+    }
+  );
+
+  return weightedChoice(weightedVersions);
 }
 
 function generateSession(dayOffset: number): RawEvent[] {
   const events: RawEvent[] = [];
   const sessionId = `s_banking_${randomUUID().slice(0, 4)}`;
 
+  // Calculate current date for this session
+  const currentDate = new Date();
+  currentDate.setDate(currentDate.getDate() - dayOffset);
+
   // Choose country first
   const country = weightedChoice(COUNTRIES);
+  const locale = weightedChoice(country.locales); // NEW: Multi-locale support
 
   // Choose app based on country
   let availableApps = APPS.filter((app) =>
@@ -406,12 +768,6 @@ function generateSession(dayOffset: number): RawEvent[] {
       : randomChoice<"ios" | "android" | "web">(["ios", "android", "web"]);
   const device = weightedChoice(DEVICES[platform]);
 
-  // Get versions for this app
-  const appVersions = VERSIONS[app.id as keyof typeof VERSIONS];
-  const version = randomChoice(
-    appVersions[platform] || appVersions.web || ["1.0.0"]
-  );
-
   const releaseChannel =
     Math.random() < 0.7
       ? "prod"
@@ -420,6 +776,15 @@ function generateSession(dayOffset: number): RawEvent[] {
       : Math.random() < 0.5
       ? "uat"
       : "dev";
+
+  // NEW: Use version selection with release dates
+  const versionInfo = chooseVersionForSession(
+    app.id,
+    platform,
+    releaseChannel,
+    currentDate
+  );
+
   const networkType =
     Math.random() < 0.4 ? "wifi" : Math.random() < 0.9 ? "cellular" : "offline";
   const carrier =
@@ -438,13 +803,6 @@ function generateSession(dayOffset: number): RawEvent[] {
       ? `Android ${11 + Math.floor(Math.random() * 3)}`
       : "Web";
 
-  const buildNumber =
-    platform === "ios"
-      ? version.replace(/\./g, "")
-      : platform === "android"
-      ? version.replace(/\./g, "") + "00"
-      : version.replace(/\./g, "") + "0";
-
   // Generate banking session events
   const eventCount = Math.max(
     2,
@@ -461,13 +819,13 @@ function generateSession(dayOffset: number): RawEvent[] {
       app_name: app.name,
       platform,
       release_channel: releaseChannel,
-      app_version: version,
-      build_number: buildNumber,
+      app_version: versionInfo.version,
+      build_number: versionInfo.build_number,
       os_version: osVersion,
       device_model: device.model,
       device_tier: device.tier as "low" | "mid" | "high",
       country: country.code,
-      locale: country.locale,
+      locale: locale.code,
       network_type: networkType as "wifi" | "cellular" | "offline",
       carrier,
       session_id: sessionId,
@@ -481,9 +839,7 @@ function generateSession(dayOffset: number): RawEvent[] {
     // Determine event type
     let eventType: "analytics" | "performance" | "crash";
 
-    if (
-      shouldCrash(platform, version, device.tier, releaseChannel, country.code)
-    ) {
+    if (shouldCrash(versionInfo, device.tier, releaseChannel, currentDate)) {
       eventType = "crash";
     } else if (
       Math.random() <
@@ -807,7 +1163,9 @@ function generateDailyRollups(rawEvents: RawEvent[]): DailyRollup[] {
   });
 }
 
-// Generate and save data
+//=============================
+// GENERATE AND SAVE DATA
+//=============================
 console.log("🏦 Generating banking application data...");
 const rawEvents = generateRawEvents();
 console.log(`Generated ${rawEvents.length} raw events`);
@@ -815,11 +1173,15 @@ console.log(`Generated ${rawEvents.length} raw events`);
 const dailyRollups = generateDailyRollups(rawEvents);
 console.log(`Generated ${dailyRollups.length} daily rollups`);
 
-console.log("raw events", existsSync("data/raw_events.json"))
-console.log("daily rollups", existsSync("data/daily_rollups.json"))
-if (!existsSync("data/raw_events.json") && !existsSync("data/daily_rollups.json")) mkdirSync('data')
+console.log("raw events", existsSync("data/raw_events.json"));
+console.log("daily rollups", existsSync("data/daily_rollups.json"));
+if (
+  !existsSync("data/raw_events.json") &&
+  !existsSync("data/daily_rollups.json")
+)
+  mkdirSync("data");
 
-writeFileSync("data/raw_events.json", JSON.stringify(rawEvents, null, 2)); 
+writeFileSync("data/raw_events.json", JSON.stringify(rawEvents, null, 2));
 writeFileSync("data/daily_rollups.json", JSON.stringify(dailyRollups, null, 2));
 
 console.log("✅ Banking data generation complete!");
