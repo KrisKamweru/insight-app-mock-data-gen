@@ -1731,12 +1731,7 @@ console.log(`Generated ${dailyRollups.length} daily rollups`);
 
 console.log("raw events", existsSync("data/raw_events.json"));
 console.log("daily rollups", existsSync("data/daily_rollups.json"));
-if (
-  !existsSync("data/raw_events.json") &&
-  !existsSync("data/daily_rollups.json") &&
-  !existsSync("data/validation_report.json")
-)
-  mkdirSync("data");
+if (!existsSync("data")) mkdirSync("data");
 
 writeFileSync("data/raw_events.json", JSON.stringify(rawEvents, null, 2));
 writeFileSync("data/daily_rollups.json", JSON.stringify(dailyRollups, null, 2));
