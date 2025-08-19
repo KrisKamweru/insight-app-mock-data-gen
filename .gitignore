@@ -141,3 +141,4 @@ vite.config.ts.timestamp-*
 # Generated mock data
 daily_rollups.json
 raw_events.json
+validation_report.json
