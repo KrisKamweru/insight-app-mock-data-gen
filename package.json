@@ -10,9 +10,6 @@
   "author": "",
   "license": "MIT",
   "type": "module",
-  "dependencies": {
-    "uuid": "^11.1.0"
-  },
   "devDependencies": {
     "@types/node": "^24.3.0"
   }
