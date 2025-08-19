@@ -121,17 +121,17 @@ const APPS = [
 const COUNTRIES = [
   {
     code: "KE",
-    weight: 0.35,
+    weight: 0.55,
     carriers: ["Safaricom", "Airtel Kenya"],
     locales: [
       { code: "EN", weight: 0.5, name: "English" },
       { code: "SW", weight: 0.45, name: "Swahili" },
-      { code: "ZH", weight: 0.05, name: "Chinese" }, // Chinese diaspora/business
+      { code: "ZH", weight: 0.05, name: "Chinese" },
     ],
   },
   {
     code: "UG",
-    weight: 0.2,
+    weight: 0.14,
     carriers: ["MTN Uganda", "Airtel Uganda"],
     locales: [
       { code: "EN", weight: 0.85, name: "English" },
@@ -140,7 +140,7 @@ const COUNTRIES = [
   },
   {
     code: "TZ",
-    weight: 0.18,
+    weight: 0.12,
     carriers: ["Vodacom Tanzania", "Airtel Tanzania"],
     locales: [
       { code: "SW", weight: 0.7, name: "Swahili" },
@@ -149,7 +149,7 @@ const COUNTRIES = [
   },
   {
     code: "RW",
-    weight: 0.12,
+    weight: 0.08,
     carriers: ["MTN Rwanda", "Airtel Rwanda"],
     locales: [
       { code: "RW", weight: 0.6, name: "Kinyarwanda" },
@@ -159,7 +159,7 @@ const COUNTRIES = [
   },
   {
     code: "DRC",
-    weight: 0.1,
+    weight: 0.07,
     carriers: ["Orange DRC", "Vodacom DRC"],
     locales: [
       { code: "FR", weight: 0.75, name: "French" },
@@ -169,7 +169,7 @@ const COUNTRIES = [
   },
   {
     code: "SS",
-    weight: 0.05,
+    weight: 0.04,
     carriers: ["MTN South Sudan", "Zain South Sudan"],
     locales: [
       { code: "EN", weight: 0.9, name: "English" },
@@ -609,11 +609,13 @@ function generateTimestamp(dayOffset: number): {
   const second = Math.floor(Math.random() * 60);
   const ms = Math.floor(Math.random() * 1000);
 
-  targetDay.setHours(hour, minute, second, ms);
+  targetDay.setUTCHours(hour, minute, second, ms);
+
+  const iso = targetDay.toISOString();
 
   return {
-    timestamp: targetDay.toISOString(),
-    day: targetDay.toISOString().split("T")[0],
+    timestamp: iso,
+    day: iso.split("T")[0],
     hour,
   };
 }
@@ -660,16 +662,16 @@ function shouldCrash(
   releaseChannel: string,
   currentDate: Date
 ): boolean {
-  let baseProbability = 0.002; // 0.2% base crash rate (higher for banking due to complexity)
+  let baseProbability = 0.004; // 0.4% base crash rate
 
   // Environment multiplier
-  if (releaseChannel === "dev") baseProbability *= 4;
-  else if (releaseChannel === "uat") baseProbability *= 2.5;
-  else if (releaseChannel === "pilot") baseProbability *= 1.8;
+  if (releaseChannel === "dev") baseProbability *= 3.0;
+  else if (releaseChannel === "uat") baseProbability *= 2.0;
+  else if (releaseChannel === "pilot") baseProbability *= 1.4;
 
   // Device tier multiplier
-  if (deviceTier === "low") baseProbability *= 1.6;
-  else if (deviceTier === "high") baseProbability *= 0.7;
+  if (deviceTier === "low") baseProbability *= 1.3;
+  else if (deviceTier === "high") baseProbability *= 0.85;
 
   // Release spike - crash rates spike in first 7 days after release
   const daysSinceRelease = calculateDaysSinceRelease(
@@ -678,7 +680,7 @@ function shouldCrash(
   );
   if (daysSinceRelease <= 7) {
     // Exponential decay from 3x multiplier on day 0 to 1x on day 7
-    const spikeMultiplier = 1 + 2 * Math.exp(-daysSinceRelease / 3);
+    const spikeMultiplier = 1 + 1.2 * Math.exp(-daysSinceRelease / 3);
     baseProbability *= spikeMultiplier;
   }
 
@@ -693,52 +695,85 @@ function chooseVersionForSession(
 ): AppVersion {
   const appVersions =
     VERSIONS_WITH_RELEASES[appId as keyof typeof VERSIONS_WITH_RELEASES];
-  if (
-    !appVersions ||
-    !appVersions[releaseChannel as keyof typeof appVersions]
-  ) {
-    // Fallback
-    return {
-      version: "1.0.0",
-      build_number: "1000",
-      release_date: "2025-01-01",
-    };
-  }
 
-  const platformVersions =
-    appVersions[releaseChannel as keyof typeof appVersions][
-      platform as keyof any
-    ] || [];
+  const channelBlock =
+    appVersions &&
+    (appVersions as any)[releaseChannel] &&
+    (appVersions as any)[releaseChannel][platform];
+
+  const platformVersions: Array<{
+    version: string;
+    build_number: string;
+    release_date: string;
+  }> = channelBlock || [];
+
   if (platformVersions.length === 0) {
+    const suffix =
+      releaseChannel === "dev"
+        ? "-dev.0"
+        : releaseChannel === "uat"
+        ? "-uat.0"
+        : releaseChannel === "pilot"
+        ? "-pilot.0"
+        : "";
     return {
-      version: "1.0.0",
+      version: `1.0.0${suffix}`,
       build_number: "1000",
       release_date: "2025-01-01",
     };
   }
 
   // Weight versions by adoption curve (newer versions adopted gradually)
-  const weightedVersions = platformVersions.map(
-    (v: { release_date: string }) => {
-      const daysSinceRelease = calculateDaysSinceRelease(
-        v.release_date,
-        currentDate
-      );
+  const weightedVersions = platformVersions.map((v) => {
+    const daysSinceRelease = calculateDaysSinceRelease(
+      v.release_date,
+      currentDate
+    );
 
-      // Adoption curve: slow start, then rapid adoption, then plateau
-      let adoptionWeight = 1;
-      if (daysSinceRelease <= 3)
-        adoptionWeight = 0.1; // Very low adoption first 3 days
-      else if (daysSinceRelease <= 7) adoptionWeight = 0.4; // Building adoption
-      else if (daysSinceRelease <= 14) adoptionWeight = 0.8; // High adoption
-      else if (daysSinceRelease <= 30) adoptionWeight = 1.0; // Peak adoption
-      else adoptionWeight = 0.6; // Declining as users move to newer versions
+    // Adoption curve: slow start, then rapid adoption, then plateau
+    let adoptionWeight = 1;
+    if (daysSinceRelease <= 3)
+      adoptionWeight = 0.1; // Very low adoption first 3 days
+    else if (daysSinceRelease <= 7) adoptionWeight = 0.4; // Building adoption
+    else if (daysSinceRelease <= 14) adoptionWeight = 0.8; // High adoption
+    else if (daysSinceRelease <= 30) adoptionWeight = 1.0; // Peak adoption
+    else adoptionWeight = 0.6; // Declining as users move to newer versions
 
-      return { ...v, weight: adoptionWeight };
-    }
-  );
+    return { ...v, weight: adoptionWeight };
+  });
 
   return weightedChoice(weightedVersions);
+}
+
+function hasChannel(
+  appId: string,
+  platform: "ios" | "android" | "web",
+  ch: "dev" | "uat" | "pilot" | "prod"
+): boolean {
+  const appVers =
+    VERSIONS_WITH_RELEASES[appId as keyof typeof VERSIONS_WITH_RELEASES];
+  if (!appVers) return false;
+  const channelBlock = appVers[ch as keyof typeof appVers] as any;
+  if (!channelBlock) return false;
+  const list = channelBlock[platform] as Array<any> | undefined;
+  return Array.isArray(list) && list.length > 0;
+}
+
+// Pick the best available channel: prefer prod -> pilot -> uat -> dev
+function pickAvailableChannel(
+  appId: string,
+  platform: "ios" | "android" | "web",
+  baseChannelWeights: { id: "dev" | "uat" | "pilot" | "prod"; weight: number }[]
+): "dev" | "uat" | "pilot" | "prod" {
+  // try weighted choice first
+  const proposed = weightedChoice(baseChannelWeights).id;
+  if (hasChannel(appId, platform, proposed)) return proposed;
+
+  // fallback to most stable available
+  for (const channel of ["prod", "pilot", "uat", "dev"] as const) {
+    if (hasChannel(appId, platform, channel)) return channel;
+  }
+  return "prod";
 }
 
 function generateSession(dayOffset: number): RawEvent[] {
@@ -760,6 +795,24 @@ function generateSession(dayOffset: number): RawEvent[] {
 
   // Branch app has lower probability (staff vs customer ratio)
   const isBranchSession = Math.random() < 0.15;
+  // Weighted channel choice (lower dev/uat exposure)
+  const baseChannelWeights: {
+    id: "dev" | "uat" | "pilot" | "prod";
+    weight: number;
+  }[] = isBranchSession
+    ? [
+        { id: "prod", weight: 0.95 },
+        { id: "pilot", weight: 0.04 },
+        { id: "uat", weight: 0.009 },
+        { id: "dev", weight: 0.001 },
+      ]
+    : [
+        { id: "prod", weight: 0.88 },
+        { id: "pilot", weight: 0.08 },
+        { id: "uat", weight: 0.03 },
+        { id: "dev", weight: 0.01 },
+      ];
+
   if (isBranchSession) {
     availableApps = availableApps.filter((app) => app.isBranchApp);
   } else {
@@ -775,14 +828,11 @@ function generateSession(dayOffset: number): RawEvent[] {
       : randomChoice<"ios" | "android" | "web">(["ios", "android", "web"]);
   const device = weightedChoice(DEVICES[platform]);
 
-  const releaseChannel =
-    Math.random() < 0.7
-      ? "prod"
-      : Math.random() < 0.6
-      ? "pilot"
-      : Math.random() < 0.5
-      ? "uat"
-      : "dev";
+  const releaseChannel = pickAvailableChannel(
+    app.id,
+    platform as "ios" | "android" | "web",
+    baseChannelWeights
+  );
 
   // NEW: Use version selection with release dates
   const versionInfo = chooseVersionForSession(
@@ -1051,11 +1101,15 @@ function generateRawEvents(): RawEvent[] {
   const sessionsPerDay = Math.round(
     CONFIG.SESSIONS_PER_DAY * (CONFIG.TOTAL_EVENTS_TARGET / 45000)
   );
+  const now = new Date();
 
   for (let day = 0; day < CONFIG.DATE_RANGE_DAYS; day++) {
     // Weekend reduction for banking
-    const isWeekend = day % 7 === 5 || day % 7 === 6;
+    const target = new Date(now.getTime() - day * 24 * 60 * 60 * 1000);
+    const dayNow = target.getUTCDay(); // 0=Sun, 6=Sat
+    const isWeekend = dayNow === 0 || dayNow === 6;
     const weekendMultiplier = isWeekend ? 0.3 : 1.0;
+
     const dailySessions = Math.round(
       sessionsPerDay * weekendMultiplier * (0.8 + Math.random() * 0.4)
     );
@@ -1340,7 +1394,7 @@ class DataValidator {
       );
     }
 
-    if (Math.abs(crashRatio - CONFIG.PERFORMANCE_RATIO) > 0.1) {
+    if (Math.abs(performanceRatio - CONFIG.PERFORMANCE_RATIO) > 0.1) {
       result.warnings.push(
         `Performance ratio ${performanceRatio.toFixed(
           3
@@ -1471,6 +1525,12 @@ class DataValidator {
     let rollupErrors = 0;
 
     for (const rollup of sampleRollups) {
+      const computeGroup = (e: RawEvent): string => {
+        if (e.source === "performance") return `performance:${e.event_name}`;
+        if (e.source === "analytics")
+          return `analytics:${e.analytics_event as string}`;
+        return `crash:${e.is_fatal ? "fatal" : "nonfatal"}`;
+      };
       // Find matching raw events
       const matchingEvents = this.rawEvents.filter(
         (e) =>
@@ -1481,7 +1541,8 @@ class DataValidator {
           e.app_version === rollup.app_version &&
           e.release_channel === rollup.release_channel &&
           e.country === rollup.country &&
-          e.device_tier === rollup.device_tier
+          e.device_tier === rollup.device_tier &&
+          computeGroup(e) === rollup.event_group
       );
 
       if (matchingEvents.length !== rollup.events_count) {
@@ -1682,7 +1743,7 @@ writeFileSync("data/daily_rollups.json", JSON.stringify(dailyRollups, null, 2));
 
 validateGeneratedData(rawEvents, dailyRollups);
 
-console.log('✅ Data generation and validation complete!')
+console.log("✅ Data generation and validation complete!");
 
 // Banking-specific stats
 const appStats = rawEvents.reduce((acc, e) => {
